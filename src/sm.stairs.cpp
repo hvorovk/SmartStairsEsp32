@@ -1,4 +1,7 @@
 #include "sm.stairs.h"
+#include "Effects/IdleEffects/FireEffect.h"
+#include "Effects/IdleEffects/StarsEffect.h"
+
 
 SMStairs::SMStairs(bool debug)
 {
@@ -17,52 +20,58 @@ void SMStairs::makeStep()
     mainLoop();
 }
 
-void SMStairs::init(std::vector<int> ledByStairs)
+void SMStairs::init(std::vector<uint16_t> ledByStairs)
 {
+    m_effects = {
+        new StarsEffect(),
+        new FireEffect()
+    };
+    m_effect = new StarsEffect();   
     m_stairCount = ledByStairs.size();
     m_maxLedInStair = *std::max_element(ledByStairs.begin(), ledByStairs.end());
 
-    int ledCount = 1;
-    for (int i = 0; i < m_stairCount; i++) {
-        m_stairsMatrix.push_back(std::vector<int>(m_maxLedInStair, -1));
-        ledCount += ledByStairs[i];
+    m_ledCount = 1;
+    for (uint16_t i = 0; i < m_stairCount; i++) {
+        m_stairsMatrix.push_back(std::vector<uint16_t>(m_maxLedInStair, -1));
+        m_ledCount += ledByStairs[i];
     }
 
-    pinMode(SmartStairsPin::lightFull, INPUT);
     pinMode(SmartStairsPin::lightNight, INPUT);
     pinMode(SmartStairsPin::topTrigger, OUTPUT);
     pinMode(SmartStairsPin::bottomTrigger, OUTPUT);
     pinMode(SmartStairsPin::topEcho, INPUT);
     pinMode(SmartStairsPin::bottomEcho, INPUT);
 
-    m_leds = new CRGB[ledCount];
-    FastLED.addLeds<WS2811, SmartStairsPin::ledStrip, BRG>(m_leds, ledCount)
+    m_leds = new CRGB[m_ledCount];
+    FastLED.addLeds<WS2811, SmartStairsPin::ledStrip, BRG>(m_leds, m_ledCount)
                                 .setCorrection(TypicalLEDStrip);
 
     clearLed();
 
-    int shift = 1;
-    int middleElement = static_cast<int>(m_maxLedInStair / 2. + 0.5);
+    FastLED.setBrightness(255);
+
+    uint16_t shift = 1;
+    uint16_t middleElement = static_cast<uint16_t>(m_maxLedInStair / 2. + 0.5);
 
     double modificator = m_maxLedInStair % 2 ? 1. : 0.5;
 
-    for (int i = 0; i < m_stairCount; i++) {
-        const int pixelsInRow = ledByStairs[i];
+    for (uint16_t i = 0; i < m_stairCount; i++) {
+        const uint16_t pixelsInRow = ledByStairs[i];
 
-        int counter = 0;
+        uint16_t counter = 0;
 
-        int shiftArray[m_maxLedInStair];
+        uint16_t shiftArray[m_maxLedInStair];
 
-        for(int j = 0; j < pixelsInRow; j++, shift++) {
+        for(uint16_t j = 0; j < pixelsInRow; j++, shift++) {
             shiftArray[counter] = shift;
             counter++;
         }
 
-        int curentStairMiddleElement = static_cast<int>(pixelsInRow / 2. + modificator);
+        uint16_t currentStairMiddleElement = static_cast<uint16_t>(pixelsInRow / 2. + modificator);
 
-        int startPosition = middleElement - curentStairMiddleElement;
+        uint16_t startPosition = middleElement - currentStairMiddleElement;
 
-        for (int j = startPosition, k = 0; k < counter; j++, k++) {
+        for (uint16_t j = startPosition, k = 0; k < counter; j++, k++) {
             m_stairsMatrix[i][j] = shiftArray[k];
         }
     }
@@ -75,59 +84,88 @@ void SMStairs::init(std::vector<int> ledByStairs)
 
 void SMStairs::mainLoop()
 {
+    if (millis() - m_lastLightChangeTime > SmartStairsConfig::effectTimeToChange) {
+        nextEffect();
+        m_lastLightChangeTime = millis();
+    }
+
     if (millis() - m_lastLightChangeTime > 1000) {
         m_lastLightStatus = lightStatus();
         setFirstLast();
         m_lastLightChangeTime = millis();
     }
 
-
-    if (m_lastLightStatus == LightStatus::day) {
-        return;
-    }
-
     SMStairSensorPosition position = distanceSensorsCheck();
 
     if (position == SMStairSensorPosition::None) {
-        return; // Go to next check
+        if (m_lastLightStatus != LightStatus::night) {
+            if (millis() - m_lastEffectTime > m_effect->timeBetweenCalls()) {
+                m_effect->fillLedWithProxy(m_stairsMatrix, m_leds, m_ledCount);
+                FastLED.show();
+                m_lastEffectTime = millis();
+                m_firstLastDirtyStatus = true;
+            }
+        }
+       
+        return;
     }
+    m_effect->refresh();
 
     if (position == SMStairSensorPosition::BottomSensor) {
         turnStairsFromDown();
+        m_lastEffectTime = millis();
         return;
     }
 
     turnStairsFromUp();
+    m_lastEffectTime = millis();
+}
+
+void SMStairs::nextEffect()
+{
+    auto it = find(m_effects.begin(), m_effects.end(), m_effect);
+
+
+    int currentEffectIndex = it - m_effects.begin();
+
+    currentEffectIndex++;
+    if (currentEffectIndex >= m_effects.size()) {
+        currentEffectIndex = 0;
+    }
+
+    m_effect = m_effects[currentEffectIndex];
+    m_effect->refresh();
 }
  
 void SMStairs::setFirstLast()
 {
-    if (m_lastLightStatus == LightStatus::day) {
-        clearLed();
-    } else if (m_lastLightStatus == LightStatus::evening) {
-        for (int i = 0; i < m_maxLedInStair; i++) {
-            setPixel(0, i, m_eveningStandColor);
-            setPixel(m_stairCount -1, i, m_eveningStandColor);
-        }
-    } else {
-        for (int i = 0; i < m_maxLedInStair; i++) {
+    if (!m_firstLastDirtyStatus) {
+        return; // If led has not changed it's status so we don't need to update it as well
+    }
+
+    if (m_lastLightStatus == LightStatus::night) {
+        FastLED.clear(false);
+        for (uint16_t i = 0; i < m_maxLedInStair; i++) {
             setPixel(0, i, m_nightStandColor);
             setPixel(m_stairCount -1, i, m_nightStandColor);
         }
+        
+        FastLED.show();
+        m_firstLastDirtyStatus = false;
+        m_effect->refresh();
     }
-    FastLED.show();
 }
 
 void SMStairs::turnStairsFromUp()
 {
-    for (int i = 0; i < m_stairCount; i++) { // Run through all stairs
+    for (uint16_t i = 0; i < m_stairCount; i++) { // Run through all stairs
         turnOnStair(i);
         delay(SmartStairsConfig::delayBetweenStairs);
     }
 
     delay (SmartStairsConfig::delayBetweenOnOff);
 
-    for (int i = 0; i < m_stairCount; i++) { // Run through all stairs
+    for (uint16_t i = 0; i < m_stairCount; i++) { // Run through all stairs
         turnOffStair(i);
         delay(SmartStairsConfig::delayBetweenStairs);
     }
@@ -135,25 +173,26 @@ void SMStairs::turnStairsFromUp()
 
 void SMStairs::turnStairsFromDown()
 {
-    for (int i = m_stairCount; i > 0; i--) { // Run through all stairs
+    for (int8_t i = m_stairCount; i > 0; i--) { // Run through all stairs
         turnOnStair(i - 1);
         delay(SmartStairsConfig::delayBetweenStairs);
     }
 
     delay (SmartStairsConfig::delayBetweenOnOff);
 
-    for (int i = m_stairCount; i > 0; i--) { // Run through all stairs
+    for (int8_t i = m_stairCount; i > 0; i--) { // Run through all stairs
         turnOffStair(i - 1);
         delay(SmartStairsConfig::delayBetweenStairs);
     }
 }
 
-void SMStairs::turnOnStair(int stairIndex)
+void SMStairs::turnOnStair(uint16_t stairIndex)
 {
+    //! TODO: differend logic for filing led
     if (m_currentStairEffect == SMStairLightEffect::CenterFill) {
         CRGB color =  m_nightActiveColor;
 
-        if (m_lastLightStatus == LightStatus::evening) {
+        if (m_lastLightStatus != LightStatus::night) {
             color = m_eveningActiveColor[stairIndex];
         }
         
@@ -171,6 +210,7 @@ void SMStairs::turnOnStair(int stairIndex)
             setPixel(stairIndex, leftPointer, color);
             setPixel(stairIndex, rightPointer, color);
             FastLED.show();
+            m_firstLastDirtyStatus = true;
             leftPointer--;
             rightPointer++;
 
@@ -179,8 +219,9 @@ void SMStairs::turnOnStair(int stairIndex)
     }
 }
 
-void SMStairs::turnOffStair(int stairIndex)
+void SMStairs::turnOffStair(uint16_t stairIndex)
 {
+    //! TODO: differend logic for filing led
     if (m_currentStairEffect == SMStairLightEffect::CenterFill) {
         CRGB color = {0, 0, 0};
 
@@ -203,6 +244,7 @@ void SMStairs::turnOffStair(int stairIndex)
             setPixel(stairIndex, rightPointer, color);
 
             FastLED.show();
+            m_firstLastDirtyStatus = true;
             leftPointer++;
             rightPointer--;
 
@@ -213,24 +255,19 @@ void SMStairs::turnOffStair(int stairIndex)
 
 LightStatus SMStairs::lightStatus()
 {
-    bool full = digitalRead(SmartStairsPin::lightFull);;
-    if (full && digitalRead(SmartStairsPin::lightNight)) {
+    if (digitalRead(SmartStairsPin::lightNight)) {
         return LightStatus::night;
     }
-  
-    if (full) {
-        return LightStatus::evening;
-    }
-  
     return LightStatus::day;
 }
 
 void SMStairs::clearLed()
 {
     FastLED.clear(true);
+    m_firstLastDirtyStatus = true;
 }
 
-void SMStairs::setPixel(int stair, int pos, CRGB color) {
+void SMStairs::setPixel(uint16_t stair, uint16_t pos, CRGB color) {
     if ( pos >= m_maxLedInStair || m_stairsMatrix[stair][pos] == -1 ) {
         return;
     }
@@ -249,7 +286,7 @@ SMStairSensorPosition SMStairs::distanceSensorsCheck()
     return SMStairSensorPosition::None;
 }
 
-bool SMStairs::compareDistance(int trigPin, int echoPin, int distance)
+bool SMStairs::compareDistance(uint16_t trigPin, uint16_t echoPin, uint16_t distance)
 {
     // Prepare
     digitalWrite(trigPin, LOW);

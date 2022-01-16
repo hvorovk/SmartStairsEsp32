@@ -7,7 +7,6 @@ namespace SmartStairsPin {
     // Led strip pin
     const int ledStrip = 13;
     // Light sensors pin
-    const int lightFull = 12;
     const int lightNight = 14;
 }
 
@@ -17,8 +16,10 @@ namespace SmartStairsConfig {
     const int stairsFadeSpeed = 300;
     const int delayBetweenOnOff = 4000;
 
-    const int upWidth = 50;
+    const int upWidth = 60;
     const int downWidth = 70; 
+
+    const int effectTimeToChange = 1000 * 60 * 60;
 }
 
 enum LightStatus {

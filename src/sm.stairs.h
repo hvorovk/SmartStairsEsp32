@@ -5,6 +5,7 @@
 #include "FastLED.h"
 
 #include "sm.stairsconstants.h"
+#include "Effects/AbstractEffect.h"
 
 enum class SMStairLightEffect {
     CenterFill,
@@ -22,7 +23,7 @@ class SMStairs
 public:
     SMStairs(bool debug = false);
 
-    void init(std::vector<int> ledByStairs);
+    void init(std::vector<uint16_t> ledByStairs);
 
     // It is blocking operations will block thread forever
     void startMainLoop();
@@ -34,7 +35,7 @@ private:
     void clearLed();
 
     // Set color to pixel by given coordinates
-    void setPixel(int stair, int pos, CRGB color);
+    void setPixel(uint16_t stair, uint16_t pos, CRGB color);
 
     /*
     * Infinite loop with checking ultrasonic and light sensors  
@@ -44,11 +45,13 @@ private:
     void turnStairsFromUp();
     void turnStairsFromDown();
 
-    void turnOnStair(int stairIndex);
-    void turnOffStair(int stairIndex);
+    void turnOnStair(uint16_t stairIndex);
+    void turnOffStair(uint16_t stairIndex);
 
     // Set color to first/last stairs
     void setFirstLast();
+
+    void nextEffect();
 
     // Getter 
     SMStairSensorPosition distanceSensorsCheck();
@@ -58,13 +61,16 @@ private:
 
     CRGB *m_leds; // Raw led storage
 
+    AbstractEffect *m_effect = nullptr;
+
     SMStairLightEffect m_currentStairEffect = SMStairLightEffect::CenterFill;
     LightStatus m_lastLightStatus;
     // Proxy for simple access to leds 
-    std::vector<std::vector<int>> m_stairsMatrix;
+    std::vector<std::vector<uint16_t>> m_stairsMatrix;
 
-    int m_stairCount = 0;
-    int m_maxLedInStair = 0;
+    uint16_t m_stairCount = 0;
+    uint16_t m_maxLedInStair = 0;
+    uint16_t m_ledCount = 0;
 
     CRGB m_nightStandColor = CRGB(10, 5, 2);
     CRGB m_nightActiveColor = CRGB(15, 8 , 2);
@@ -88,10 +94,18 @@ private:
         CRGB(60, 0 , 160)
     };
 
+
+    std::vector<AbstractEffect*> m_effects;
+
     int m_lastLightChangeTime = 0;
+    int m_lastEffectTime = 0;
+    int m_effectChangingTime = 0;
+
+    //! Because of this field we will not update led while there is no changes.
+    bool m_firstLastDirtyStatus = true;
 
     // Measure distance and compare it with given
-    bool compareDistance(int trigPin, int echoPin, int distance);
+    bool compareDistance(uint16_t trigPin, uint16_t echoPin, uint16_t distance);
 };
 
 #endif // SM_STAIRS_H

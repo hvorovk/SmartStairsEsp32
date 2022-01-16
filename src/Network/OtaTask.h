@@ -12,16 +12,22 @@
 /**
  * Standart Ota procedure with wifi setup
  */
+
+const long utcOffsetInSeconds = 7 * 60 * 60;
+
+WiFiUDP ntpUDP;
+
 void otaTask( void * parameter) {
 
     WiFi.mode(WIFI_MODE_STA);
     WiFi.begin(ssid, password);
 
+   
     WiFi.waitForConnectResult();
-
-     if (!WiFi.isConnected()) {
+    while (!WiFi.isConnected()) {
         Serial.println("No wifi mode!");
-        return;
+        delay(1000);
+        WiFi.waitForConnectResult();
     }
 
     ArduinoOTA.setPort(8080);
@@ -58,7 +64,6 @@ void otaTask( void * parameter) {
     Serial.println("OTA Ready");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-
 
     for (;;) {
         ArduinoOTA.handle();
